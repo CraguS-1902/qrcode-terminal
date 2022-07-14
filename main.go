@@ -64,7 +64,8 @@ var (
 type QRCodeString string
 
 func (v *QRCodeString) Print() {
-	fmt.Sprintf(*v)
+	b := string(*v)
+ 	fmt.Sprintf(b)
 }
 
 type qrcodeTerminal struct {
