@@ -1,156 +1,153 @@
-package qrcodeTerminal
+package qrterminal
 
 import (
-	"fmt"
+	"io"
+	"strings"
 
-	"github.com/skip2/go-qrcode"
-	"github.com/mattn/go-colorable"
-	"image/png"
-	nbytes "bytes"
+	"rsc.io/qr"
 )
 
-type consoleColor string
-type consoleColors struct {
-	NormalBlack   consoleColor
-	NormalRed     consoleColor
-	NormalGreen   consoleColor
-	NormalYellow  consoleColor
-	NormalBlue    consoleColor
-	NormalMagenta consoleColor
-	NormalCyan    consoleColor
-	NormalWhite   consoleColor
-	BrightBlack   consoleColor
-	BrightRed     consoleColor
-	BrightGreen   consoleColor
-	BrightYellow  consoleColor
-	BrightBlue    consoleColor
-	BrightMagenta consoleColor
-	BrightCyan    consoleColor
-	BrightWhite   consoleColor
-}
-type qrcodeRecoveryLevel qrcode.RecoveryLevel
-type qrcodeRecoveryLevels struct {
-	Low     qrcodeRecoveryLevel
-	Medium  qrcodeRecoveryLevel
-	High    qrcodeRecoveryLevel
-	Highest qrcodeRecoveryLevel
-}
+const WHITE = "\033[47m  \033[0m"
+const BLACK = "\033[40m  \033[0m"
 
-var (
-	ConsoleColors consoleColors = consoleColors{
-		NormalBlack:   "\033[38;5;0m  \033[0m",
-		NormalRed:     "\033[38;5;1m  \033[0m",
-		NormalGreen:   "\033[38;5;2m  \033[0m",
-		NormalYellow:  "\033[38;5;3m  \033[0m",
-		NormalBlue:    "\033[38;5;4m  \033[0m",
-		NormalMagenta: "\033[38;5;5m  \033[0m",
-		NormalCyan:    "\033[38;5;6m  \033[0m",
-		NormalWhite:   "\033[38;5;7m  \033[0m",
-		BrightBlack:   "\033[48;5;0m  \033[0m",
-		BrightRed:     "\033[48;5;1m  \033[0m",
-		BrightGreen:   "\033[48;5;2m  \033[0m",
-		BrightYellow:  "\033[48;5;3m  \033[0m",
-		BrightBlue:    "\033[48;5;4m  \033[0m",
-		BrightMagenta: "\033[48;5;5m  \033[0m",
-		BrightCyan:    "\033[48;5;6m  \033[0m",
-		BrightWhite:   "\033[48;5;7m  \033[0m"}
-	QRCodeRecoveryLevels = qrcodeRecoveryLevels{
-		Low:     qrcodeRecoveryLevel(qrcode.Low),
-		Medium:  qrcodeRecoveryLevel(qrcode.Medium),
-		High:    qrcodeRecoveryLevel(qrcode.High),
-		Highest: qrcodeRecoveryLevel(qrcode.Highest)}
-)
+// Use ascii blocks to form the QR Code
+const BLACK_WHITE = "▄"
+const BLACK_BLACK = " "
+const WHITE_BLACK = "▀"
+const WHITE_WHITE = "█"
 
-type QRCodeString string
+// Level - the QR Code's redundancy level
+const H = qr.H
+const M = qr.M
+const L = qr.L
 
-func (v *QRCodeString) Print() {
-	b := string(*v)
- 	fmt.Sprintf(b)
+// default is 4-pixel-wide white quiet zone
+const QUIET_ZONE = 4
+
+//Config for generating a barcode
+type Config struct {
+	Level          qr.Level
+	Writer         io.Writer
+	HalfBlocks     bool
+	BlackChar      string
+	BlackWhiteChar string
+	WhiteChar      string
+	WhiteBlackChar string
+	QuietZone      int
 }
 
-type qrcodeTerminal struct {
-	front consoleColor
-	back  consoleColor
-	level qrcodeRecoveryLevel
-}
+func (c *Config) writeFullBlocks(w io.Writer, code *qr.Code) {
+	white := c.WhiteChar
+	black := c.BlackChar
 
-func (v *qrcodeTerminal) Get(content interface{}) (result *QRCodeString) {
-	var qr *qrcode.QRCode
-	var err error
-	if t, ok := content.(string); ok {
-		qr, err = qrcode.New(t, qrcode.RecoveryLevel(v.level))
-	} else if t, ok := content.([]byte); ok {
-		qr, err = qrcode.New(string(t), qrcode.RecoveryLevel(v.level))
-	}
-	if qr != nil && err == nil {
-		data := qr.Bitmap()
-		result = v.getQRCodeString(data)
-	}
-	return
-}
-
-func (v *qrcodeTerminal) Get2(bytes []byte) (result *QRCodeString) {
-	data, err := parseQR(bytes)
-	if err == nil {
-		result = v.getQRCodeString(data)
-	}
-	return
-}
-
-func New2(front, back consoleColor, level qrcodeRecoveryLevel) *qrcodeTerminal {
-	obj := qrcodeTerminal{front: front, back: back, level: level}
-	return &obj
-}
-
-func New() *qrcodeTerminal {
-	front, back, level := ConsoleColors.BrightBlack, ConsoleColors.BrightWhite, QRCodeRecoveryLevels.Medium
-	return New2(front, back, level)
-}
-
-func (v *qrcodeTerminal) getQRCodeString(data [][]bool) (result *QRCodeString) {
-	str := ""
-	for ir, row := range data {
-		lr := len(row)
-		if ir == 0 || ir == 1 || ir == 2 ||
-			ir == lr-1 || ir == lr-2 || ir == lr-3 {
-			continue
-		}
-		for ic, col := range row {
-			lc := len(data)
-			if ic == 0 || ic == 1 || ic == 2 ||
-				ic == lc-1 || ic == lc-2 || ic == lc-3 {
-				continue
-			}
-			if col {
-				str += fmt.Sprint(v.front)
+	// Frame the barcode in a 1 pixel border
+	w.Write([]byte(stringRepeat(stringRepeat(white,
+		code.Size+c.QuietZone*2)+"\r\n", c.QuietZone))) // top border
+	for i := 0; i <= code.Size; i++ {
+		w.Write([]byte(stringRepeat(white, c.QuietZone))) // left border
+		for j := 0; j <= code.Size; j++ {
+			if code.Black(j, i) {
+				w.Write([]byte(black))
 			} else {
-				str += fmt.Sprint(v.back)
+				w.Write([]byte(white))
 			}
 		}
-		str += fmt.Sprintln()
+		w.Write([]byte(stringRepeat(white, c.QuietZone-1) + "\r\n")) // right border
 	}
-	obj := QRCodeString(str)
-	result = &obj
-	return
+	w.Write([]byte(stringRepeat(stringRepeat(white,
+		code.Size+c.QuietZone*2)+"\r\n", c.QuietZone-1))) // bottom border
 }
 
-func parseQR(bytes []byte) (data [][]bool, err error) {
-	r := nbytes.NewReader(bytes)
-	img, err := png.Decode(r)
-	if err == nil {
-		rect := img.Bounds()
-		mx, my := rect.Max.X, rect.Max.Y
-		data = make([][]bool, mx)
-		for x := 0; x < mx; x++ {
-			data[x] = make([]bool, my)
-			for y := 0; y < my; y++ {
-				c := img.At(x, y)
-				r, _, _, _ := c.RGBA()
-				data[x][y] = r == 0
+func (c *Config) writeHalfBlocks(w io.Writer, code *qr.Code) {
+	ww := c.WhiteChar
+	bb := c.BlackChar
+	wb := c.WhiteBlackChar
+	bw := c.BlackWhiteChar
+	// Frame the barcode in a 4 pixel border
+	// top border
+	if c.QuietZone%2 != 0 {
+		w.Write([]byte(stringRepeat(bw, code.Size+c.QuietZone*2) + "\r\n"))
+		w.Write([]byte(stringRepeat(stringRepeat(ww,
+			code.Size+c.QuietZone*2)+"\r\n", c.QuietZone/2)))
+	} else {
+		w.Write([]byte(stringRepeat(stringRepeat(ww,
+			code.Size+c.QuietZone*2)+"\r\n", c.QuietZone/2)))
+	}
+	for i := 0; i <= code.Size; i += 2 {
+		w.Write([]byte(stringRepeat(ww, c.QuietZone))) // left border
+		for j := 0; j <= code.Size; j++ {
+			next_black := false
+			if i+1 < code.Size {
+				next_black = code.Black(j, i+1)
+			}
+			curr_black := code.Black(j, i)
+			if curr_black && next_black {
+				w.Write([]byte(bb))
+			} else if curr_black && !next_black {
+				w.Write([]byte(bw))
+			} else if !curr_black && !next_black {
+				w.Write([]byte(ww))
+			} else {
+				w.Write([]byte(wb))
 			}
 		}
+		w.Write([]byte(stringRepeat(ww, c.QuietZone-1) + "\r\n")) // right border
 	}
-	return
+	// bottom border
+	if c.QuietZone%2 == 0 {
+		w.Write([]byte(stringRepeat(stringRepeat(ww,
+			code.Size+c.QuietZone*2)+"\r\n", c.QuietZone/2-1)))
+		w.Write([]byte(stringRepeat(wb, code.Size+c.QuietZone*2) + "\r\n"))
+	} else {
+		w.Write([]byte(stringRepeat(stringRepeat(ww,
+			code.Size+c.QuietZone*2)+"\r\n", c.QuietZone/2)))
+	}
 }
 
-var outer = colorable.NewColorableStdout()
+func stringRepeat(s string, count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.Repeat(s, count)
+}
+
+// GenerateWithConfig expects a string to encode and a config
+func GenerateWithConfig(text string, config Config) {
+	if config.QuietZone < 1 {
+		config.QuietZone = 1 // at least 1-pixel-wide white quiet zone
+	}
+	w := config.Writer
+	code, _ := qr.Encode(text, config.Level)
+	if config.HalfBlocks {
+		config.writeHalfBlocks(w, code)
+	} else {
+		config.writeFullBlocks(w, code)
+	}
+}
+
+// Generate a QR Code and write it out to io.Writer
+func Generate(text string, l qr.Level, w io.Writer) {
+	config := Config{
+		Level:     l,
+		Writer:    w,
+		BlackChar: BLACK,
+		WhiteChar: WHITE,
+		QuietZone: QUIET_ZONE,
+	}
+	GenerateWithConfig(text, config)
+}
+
+// Generate a QR Code with half blocks and write it out to io.Writer
+func GenerateHalfBlock(text string, l qr.Level, w io.Writer) {
+	config := Config{
+		Level:          l,
+		Writer:         w,
+		HalfBlocks:     true,
+		BlackChar:      BLACK_BLACK,
+		WhiteBlackChar: WHITE_BLACK,
+		WhiteChar:      WHITE_WHITE,
+		BlackWhiteChar: BLACK_WHITE,
+		QuietZone:      QUIET_ZONE,
+	}
+	GenerateWithConfig(text, config)
+}
